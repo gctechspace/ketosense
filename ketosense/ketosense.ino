@@ -1,31 +1,22 @@
-// Ketose detector by Jens Clarholm (jenslabs.com)
-// LCD crystal library by David A. Mellis, Limor Fried, Tom Igoe
+// Ketose detector by members of the Gold Coast Techspace (http://gctechspace.org)
+// Based on Ketos detector by Jens Clarholm (jenslabs.com)
 
-
-/*
-LCD Pins specification
- RS: Pin 2
- EN: Pin 3
- D4: Pin 4
- D5: Pin 5
- D6: Pin 6
- D7: Pin 7
- */
-
-// Include lcd library
-#include <LiquidCrystal.h>
-#include <dht11.h>
+#include <Wire.h> 
+#include <LiquidCrystal_I2C.h>
+#include <Adafruit_Sensor.h>
+#include <DHT.h>
+#include <DHT_U.h>
 #include <math.h>
 //////////////////////////////
 
 
 // Define inputs/output pins ///
-//DHT11 sensor
-dht11 DHT11;
-#define DHT11PIN 10
+#define DHTPIN 10
+#define DHTTYPE           DHT22  
+DHT_Unified dht(DHTPIN, DHTTYPE);
 
 //LCD
-LiquidCrystal lcd(2,3,4,5,6,7);
+LiquidCrystal_I2C lcd(39, 20, 4);
 
 //TGS882 sensor
 int gasValuePin = 0;
@@ -63,12 +54,7 @@ boolean toggleModeLastButton = LOW;
 boolean toggleModeCurrentButton = LOW;
 
 // Read gas variables
-int tempRead1 = 0;
-int tempRead2 = 0;
-int tempRead3 = 0;
-float value1 = 0;
-float value2 = 0;
-float value3 = 0;
+int tempRead = 0;
 
 // General Var
 float R0 = 4500;
@@ -81,10 +67,10 @@ double scalingFactor;
 
 
 void setup() {
-  
+
   //Initiate LCD
-  lcd.begin(16,2);
-  
+  lcd.begin();
+
   //Define pinmode
   pinMode(gasValuePin,INPUT);
   pinMode(resetMaxSwitchPin, INPUT);
@@ -98,31 +84,8 @@ void setup() {
 
   //Initiate DHT11 temperature and humidity sensor and verify it.
   clearLcd();
-  printToRow1("Check DHT sensor: ");
-  int chk = DHT11.read(DHT11PIN);
-  switch (chk)
-  {
-  case 0: 
-    printToRow2("Ok. ");
-    break;
-  case -1: 
-    printToRow2("Checksum error"); 
-    break;
-  case -2: 
-    printToRow2("Time out error"); 
-    break;
-  default: 
-    printToRow2("Unknown error"); 
-    break;
-  }
   delay(2000);
 
-
-//Warmup, check that sensor is stabile.
-  while (checkIfSensorIsStabile() == false){
-    checkIfSensorIsStabile();
-  }
-  
   clearLcd();
   printToRow1("Warmup finished");
   delay(1000);
@@ -131,17 +94,12 @@ void setup() {
   printToRow2("piece to start."); 
 }
 
-
-
-
-
-
 void loop() {
-  
+
   //read three times from gas sensor with 5ms between each reading
   readsensor();
   //Check if all readings are the same which indictae a stabile behaviour and if the value is higher or lower update global max and min variables.
-  updateNewMaxOrMinWithTempHumidity(tempRead1, tempRead1, tempRead1);
+  updateNewMaxOrMinWithTempHumidity(tempRead);
   //print result to display if current value is different to previous value and update the highest value.
   if (acetoneResistanceToPPMf(toResistance(temperatureScaledValue)) != lastPPM){
     lastPPM = acetoneResistanceToPPMf(toResistance(temperatureScaledValue));
@@ -153,13 +111,13 @@ void loop() {
   //read resetMaxMinSwitch
   resetMaxSwitchCurrentButton = debounce(resetMaxSwitchLastButton, resetMaxSwitchPin);
   if (resetMaxSwitchLastButton == LOW && resetMaxSwitchCurrentButton == HIGH){
-/*    GlobalMaxValue=0;
-    GlobalMinValue=0;
-    updateScreen();
-*/
-   clearLcd();
-   printToRow1("Result displayed");
-   printToRow2("as mmol/l."); 
+    /*    GlobalMaxValue=0;
+     GlobalMinValue=0;
+     updateScreen();
+     */
+    clearLcd();
+    printToRow1("Result displayed");
+    printToRow2("as mmol/l."); 
   }
   resetMaxSwitchLastButton = resetMaxSwitchCurrentButton;
 
@@ -167,9 +125,6 @@ void loop() {
   //read resetSensorSwitch
   resetSensorSwitchCurrentButton = debounce(resetSensorSwitchLastButton, resetSensorSwitchPin);
   if (resetSensorSwitchLastButton == LOW && resetSensorSwitchCurrentButton == HIGH){ 
-    while (checkIfSensorIsStabile() == false){
-      checkIfSensorIsStabile();
-    }
     clearLcd();
     printToRow1("Reset finished");
     delay(1000);
@@ -182,25 +137,25 @@ void loop() {
   resetSensorSwitchLastButton = resetSensorSwitchCurrentButton;
 
 
-toggleModeCurrentButton = debounce(toggleModeLastButton, toggleModeSwitchPin);
+  toggleModeCurrentButton = debounce(toggleModeLastButton, toggleModeSwitchPin);
   if (toggleModeLastButton == LOW && toggleModeCurrentButton == HIGH){
-   if (currentMode == 1){
-   currentMode=2;
-   clearLcd();
-   printToRow1("Result displayed");
-   printToRow2("as mmol/l."); 
-   delay(1000);
-   updateScreen();
-     }
-   else if (currentMode == 2){
-   currentMode=1;
-   clearLcd();
-   printToRow1("Result displayed");
-   printToRow2("as PPM.");
-    delay(1000);
-    updateScreen();
-     }
- }
+    if (currentMode == 1){
+      currentMode=2;
+      clearLcd();
+      printToRow1("Result displayed");
+      printToRow2("as mmol/l."); 
+      delay(1000);
+      updateScreen();
+    }
+    else if (currentMode == 2){
+      currentMode=1;
+      clearLcd();
+      printToRow1("Result displayed");
+      printToRow2("as PPM.");
+      delay(1000);
+      updateScreen();
+    }
+  }
   toggleModeLastButton = toggleModeCurrentButton;
 
 
@@ -211,48 +166,54 @@ toggleModeCurrentButton = debounce(toggleModeLastButton, toggleModeSwitchPin);
 
 //Reads sensor 3 times with 5ms delay between reads and store read values in tempRead1, 2 and 3
 float ppmToMmol(int PPM){
- float ppmInmmol = (((float) PPM / 1000) / 58.08);
- ppmInmmol = ppmInmmol * 1000;
- return ppmInmmol;
- }
+  float ppmInmmol = (((float) PPM / 1000) / 58.08);
+  ppmInmmol = ppmInmmol * 1000;
+  return ppmInmmol;
+}
 
 void readsensor(){
-  tempRead1 = analogRead(0);
-  delay(5);
-  tempRead2 = analogRead(0);
-  delay(5);
-  tempRead3 = analogRead(0);
+  sensors_event_t event;  
+  dht.temperature().getEvent(&event);
+  if (isnan(event.temperature)) {
+    Serial.println("Error reading temperature!");
+  }
+  else {
+    Serial.print("Temperature: ");
+    Serial.print(event.temperature);
+    Serial.println(" *C");
+    tempRead = event.temperature;
+  }
 }
 
 //Update screen with result
 void updateScreen(){
   clearLcd();
-///// DEBUG start
-    printToRow1("H:");
-    printIntToCurrentCursorPossition((int)currentHumidity);
-    printStringToCurrentCursorPossition(" T:");
-    printIntToCurrentCursorPossition((int)currentTemperature);
-   // printStringToCurrentCursorPossition(" S:");
-   // printFloatToCurrentCursorPossition((float)scalingFactor);
-    printStringToCurrentCursorPossition(" R:");
-    printIntToCurrentCursorPossition((int)GlobalMaxValue);
-///// Debug end
+  ///// DEBUG start
+  printToRow1("H:");
+  printIntToCurrentCursorPossition((int)currentHumidity);
+  printStringToCurrentCursorPossition(" T:");
+  printIntToCurrentCursorPossition((int)currentTemperature);
+  // printStringToCurrentCursorPossition(" S:");
+  // printFloatToCurrentCursorPossition((float)scalingFactor);
+  printStringToCurrentCursorPossition(" R:");
+  printIntToCurrentCursorPossition((int)GlobalMaxValue);
+  ///// Debug end
 
   printToRow2("Now:    Max:    ");
   if (currentMode == 2){
-        //Result in mmol/l
-        lcd.setCursor(4,1);
-        printFloatToCurrentCursorPossition(ppmToMmol(acetoneResistanceToPPMf(toResistance(temperatureScaledValue))));
-        lcd.setCursor(12,1);
-        printFloatToCurrentCursorPossition(ppmToMmol(acetoneResistanceToPPMf(toResistance(GlobalMaxValue))));
-  
+    //Result in mmol/l
+    lcd.setCursor(4,1);
+    printFloatToCurrentCursorPossition(ppmToMmol(acetoneResistanceToPPMf(toResistance(temperatureScaledValue))));
+    lcd.setCursor(12,1);
+    printFloatToCurrentCursorPossition(ppmToMmol(acetoneResistanceToPPMf(toResistance(GlobalMaxValue))));
+
   }
   else if (currentMode == 1){
     //result in PPM
     lcd.setCursor(4,1);
-  printIntToCurrentCursorPossition(acetoneResistanceToPPMf(toResistance(temperatureScaledValue)));
-  lcd.setCursor(12,1);
-  printIntToCurrentCursorPossition(acetoneResistanceToPPMf(toResistance(GlobalMaxValue)));
+    printIntToCurrentCursorPossition(acetoneResistanceToPPMf(toResistance(temperatureScaledValue)));
+    lcd.setCursor(12,1);
+    printIntToCurrentCursorPossition(acetoneResistanceToPPMf(toResistance(GlobalMaxValue)));
   }
 }
 
@@ -261,11 +222,11 @@ int acetoneResistanceToPPMf(float resistance){
   double tempResistance = (double)resistance;
   double PPM; 
   if (tempResistance > 50000){
-  double PPM = 0;
+    double PPM = 0;
   }
   else {
-  double logPPM = (log10(tempResistance/R0)*-2.6)+2.7;
-   PPM = pow(10, logPPM);
+    double logPPM = (log10(tempResistance/R0)*-2.6)+2.7;
+    PPM = pow(10, logPPM);
   }
   return (int)PPM;
 }
@@ -284,62 +245,36 @@ boolean debounce(boolean last, int pin )
   return current;
 }
 
-//temperature sensor function, values has been hardcoded to humidity = 60 and temperature = 28 to speed up the measuring.
-int tempHumidityCompensation(int value){
-    int chk = DHT11.read(DHT11PIN);
-    delay(300);
-    //currentHumidity = ((double)DHT11.humidity);
-    //Hardcoded after realizing that the temperature and humidity were beahaving stabilly.
-    currentHumidity = 60;
-    //currentTemperature = ((double)DHT11.temperature);
-    currentTemperature = 28;
-    //function derrived from regression analysis of the graph in the datasheet
-    scalingFactor = (((currentTemperature * -0.02573)+1.898)+((currentHumidity*-0.011)+0.3966));
-    //debug
-    //clearLcd();
-    //printToRow1("Scalefactor:");
-    //printFloatToCurrentCursorPossition((float)scalingFactor);
-    delay(1000);
-    //debugstop*/
-    double scaledValue = value * scalingFactor;
-    return (int)scaledValue;
-    
-}
-      
 //check if we have new max or min after temperature and humidity scaling has been done. 
-void updateNewMaxOrMinWithTempHumidity(int value1, int value2, int value3){
-  if (value1 == value2 && value1 == value3){
-    temperatureScaledValue = tempHumidityCompensation(value1);
-    
-    if (GlobalMaxValue==0){
-      GlobalMaxValue = temperatureScaledValue;
-    }
-    if (GlobalMinValue==0){
-      GlobalMinValue = temperatureScaledValue;
-    }
-    if (temperatureScaledValue < GlobalMinValue){
-      GlobalMinValue = temperatureScaledValue;
-    }
-    if (temperatureScaledValue > GlobalMaxValue){
-      GlobalMaxValue = temperatureScaledValue;
-    }
+void updateNewMaxOrMinWithTempHumidity(int value){
+  temperatureScaledValue = value;
+
+  if (GlobalMaxValue==0){
+    GlobalMaxValue = temperatureScaledValue;
+  }
+  if (GlobalMinValue==0){
+    GlobalMinValue = temperatureScaledValue;
+  }
+  if (temperatureScaledValue < GlobalMinValue){
+    GlobalMinValue = temperatureScaledValue;
+  }
+  if (temperatureScaledValue > GlobalMaxValue){
+    GlobalMaxValue = temperatureScaledValue;
   }
 }
 //check if we have new max or min without temperature and humidity scaling. 
-void updateNewMaxOrMin(int value1, int value2, int value3){
-  if (value1 == value2 && value1 == value3){
-    if (GlobalMaxValue==0){
-      GlobalMaxValue = value1;
-    }
-    if (GlobalMinValue==0){
-      GlobalMinValue = value1;
-    }
-    if (value1 < GlobalMinValue){
-      GlobalMinValue = value1;
-    }
-    if (value1 > GlobalMaxValue){
-      GlobalMaxValue = value1;
-    }
+void updateNewMaxOrMin(int value){
+  if (GlobalMaxValue==0){
+    GlobalMaxValue = value;
+  }
+  if (GlobalMinValue==0){
+    GlobalMinValue = value;
+  }
+  if (value < GlobalMinValue){
+    GlobalMinValue = value;
+  }
+  if (value > GlobalMaxValue){
+    GlobalMaxValue = value;
   }
 }
 
@@ -402,65 +337,10 @@ void printFloatToCurrentCursorPossition(float text)
   lcd.print(text);
 }
 
-boolean checkIfSensorIsStabile()
-{
-  //read samples for 10 seconds
-  for (int i=0; i <= 20 ; i++){
 
-    //read Acetone Sensor
-    newCalibrationVal = analogRead(0);
-    //Read DHT humidity
-    DHT11.read(DHT11PIN);
-    delay(300);
-    warmupHumidity = ((float)DHT11.humidity);
-    warmupTemperature = ((float)DHT11.temperature);
 
-    //set first sample as baseline
-    if (i==0){
-      calibrationLow = newCalibrationVal;
-      calibrationHigh = newCalibrationVal;
-    }
 
-    //Determine if last sensor reading is higher then previous high
-    if (newCalibrationVal > calibrationHigh){
-      calibrationHigh = newCalibrationVal;
-    }
 
-    //Determine if sensor reading is lower then previous high
-    if (newCalibrationVal < calibrationLow){
-      calibrationLow = newCalibrationVal;
-    }   
-
-    // Print current max and min to lcd
-    clearLcd();
-    printToRow1("H:");
-    printIntToCurrentCursorPossition(warmupHumidity);
-    printStringToCurrentCursorPossition(" T:");
-    printIntToCurrentCursorPossition(warmupTemperature);
-    printStringToCurrentCursorPossition(" i:");
-    printIntToCurrentCursorPossition(i);
-    printToRow2("Max:");
-    printIntToCurrentCursorPossition(calibrationHigh);
-    printStringToCurrentCursorPossition(" Min:");
-    printIntToCurrentCursorPossition(calibrationLow);
-    delay(1000);
-    //(printToRow1("Calibrating.");
-
-    if (calibrationHigh - calibrationLow > 5){
-      return false;
-    }
-  }
-
-  // Check if resistance has not changed more then 5 steps during 10 sec = unstabile sensor
-  if ((calibrationHigh - calibrationLow) <= 3 || calibrationHigh <= 135){
-    // calculateR0(calibrationHigh);
-    return true;
-    
-  }
-  
-  else return false;
-
-}
 
 
 
